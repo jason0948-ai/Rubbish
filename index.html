@@ -1,46 +1,68 @@
-```php
 <?php
-// ==========================================
-// 後端 PHP 處理區塊 (處理 AJAX API 請求)
-// ==========================================
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_GET['action']) && $_GET['action'] === 'classify') {
-    // 設定回傳為 JSON 格式
+// 延長 PHP 執行時間至 120 秒
+set_time_limit(120);
+
+// 定義 API Key 和 Endpoint
+$apiKey = "sk-AG0EJbAgjvM7yTLfZclzSRhcBjyYorY5eQpjGvLOe5O1zD1U"; 
+
+// 設定為您的第三方代理伺服器 API 路徑 (不帶 key 參數)
+$apiUrl = "https://yinli.one/v1beta/models/gemini-2.5-flash:generateContent";
+
+// 檢查是否為 POST 請求（接收前端傳來的 JSON + Base64 圖片）
+if ($_SERVER["REQUEST_METHOD"] == "POST") {
+    // 設定回傳格式為 JSON
     header('Content-Type: application/json');
+    
+    // 解析前端傳來的 JSON 資料
+    $inputData = json_decode(file_get_contents('php://input'), true);
+    $base64Url = isset($inputData['image']) ? $inputData['image'] : '';
 
-    // 獲取前端傳來的 JSON payload
-    $input = json_decode(file_get_contents('php://input'), true);
-    $base64Image = $input['image'] ?? null;
-
-    if (!$base64Image) {
-        echo json_encode(['error' => '請提供圖片資料']);
+    if (empty($base64Url)) {
+        echo json_encode(['success' => false, 'message' => '未收到影像資料。']);
         exit;
     }
 
-    // 您提供的 API 資訊
-    $apiUrl = 'https://yinli.one/v1/chat/completions';
-    $apiKey = 'sk-AG0EJbAgjvM7yTLfZclzSRhcBjyYorY5eQpjGvLOe5O1zD1U';
+    // 處理 Base64 圖片資料：Gemini API 只接受純 Base64 字串，不包含 'data:image/jpeg;base64,' 前綴
+    $mimeType = 'image/jpeg'; // 預設 MIME 類型
+    $base64Data = $base64Url;
 
-    // 準備傳送給 Gemini 2.5 Pro 的 Payload (OpenAI 視覺格式)
+    if (strpos($base64Url, 'data:') === 0) {
+        $parts = explode(',', $base64Url);
+        $base64Data = $parts[1];
+        // 取得正確的 MIME 類型
+        if (preg_match('/^data:(.*?);base64/i', $parts[0], $matches)) {
+            $mimeType = $matches[1];
+        }
+    }
+
+    // 構建傳送給 Gemini API 的專屬資料載荷 (Payload)
     $data = [
-        'model' => 'gemini-2.5-pro',
-        'messages' => [
+        "systemInstruction" => [
+            "parts" => [
+                [
+                    "text" => "你是一個專業的垃圾分類助手。請將用戶圖片中的主要物品分類為以下三類之一：【可焚燒】、【可回收】、【不可回收】。請務必只輸出這三個詞彙中的一個，不要包含任何其他標點符號或多餘的解釋。"
+                ]
+            ]
+        ],
+        "contents" => [
             [
-                'role' => 'user',
-                'content' => [
+                "role" => "user",
+                "parts" => [
                     [
-                        'type' => 'text', 
-                        'text' => '請分辨圖片中的垃圾分類（例如：塑膠、紙類、金屬、玻璃、廚餘、一般垃圾等），並給出簡短的處理與回收建議。'
+                        "inlineData" => [
+                            "mimeType" => $mimeType,
+                            "data" => $base64Data
+                        ]
                     ],
                     [
-                        'type' => 'image_url', 
-                        'image_url' => [
-                            'url' => $base64Image
-                        ]
+                        "text" => "請識別這張圖片中的主要物品，並告訴我它屬於哪一類垃圾。"
                     ]
                 ]
             ]
         ],
-        'max_tokens' => 800
+        "generationConfig" => [
+            "temperature" => 0.1
+        ]
     ];
 
     // 初始化 cURL
@@ -52,231 +74,202 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_GET['action']) && $_GET['ac
         'Content-Type: application/json',
         'Authorization: Bearer ' . $apiKey
     ]);
+    curl_setopt($ch, CURLOPT_TIMEOUT, 120); 
+    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false); // 忽略 SSL 驗證以配合代理
 
-    // 執行請求
+    // 執行 cURL 請求
     $response = curl_exec($ch);
-    $error = curl_error($ch);
-    curl_close($ch);
+    $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
 
-    // 回傳結果給前端
-    if ($error) {
-        echo json_encode(['error' => 'cURL 請求錯誤: ' . $error]);
+    // 錯誤處理與解析結果
+    if (curl_errno($ch)) {
+        echo json_encode(['success' => false, 'message' => "連線錯誤: " . curl_error($ch)]);
+    } else if ($httpCode != 200) {
+        // 嘗試從錯誤回應中萃取詳細訊息
+        $errData = json_decode($response, true);
+        $errMsg = isset($errData['error']['message']) ? $errData['error']['message'] : strip_tags(mb_substr($response, 0, 150));
+        echo json_encode(['success' => false, 'message' => "API 錯誤 (" . $httpCode . "): " . $errMsg]);
     } else {
-        echo $response;
+        $responseData = json_decode($response, true);
+        // 讀取 Gemini 專屬的回應結構
+        if (isset($responseData['candidates'][0]['content']['parts'][0]['text'])) {
+            $result = trim($responseData['candidates'][0]['content']['parts'][0]['text']);
+            echo json_encode(['success' => true, 'result' => $result]);
+        } else {
+            echo json_encode(['success' => false, 'message' => "無法解析 API 回應結構。"]);
+        }
     }
-    exit; // 確保不會輸出下方的 HTML
+    curl_close($ch);
+    exit; // 終止腳本，不要輸出後面的 HTML
 }
 ?>
 <!DOCTYPE html>
-<html lang="zh-HK">
+<html lang="zh-TW">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>智淨城市 AI 分類掃描</title>
-    <!-- 引入 Tailwind CSS 進行快速排版 -->
+    <title>自動安檢與轉廢為能系統</title>
+    <!-- 使用 Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
-        /* 隱藏捲軸但保持可捲動 */
-        ::-webkit-scrollbar { width: 0px; background: transparent; }
-        body { 
-            background-color: #050505; /* 黑色背景 */
-            color: #3b82f6; /* 預設藍色字體 */
-            font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
-        }
+        body { background-color: #070B14; }
+        .tech-card { background-color: #111827; border-color: #1F2937; }
+        .tech-text { color: #00E5FF; text-shadow: 0 0 10px rgba(0, 229, 255, 0.4); }
+        .dotted-line { overflow: hidden; white-space: nowrap; color: #fff; letter-spacing: 2px; }
     </style>
 </head>
-<body class="min-h-screen flex flex-col items-center py-8 px-4">
+<body class="min-h-screen flex items-center justify-center p-4 font-sans text-gray-200">
 
-    <!-- 標題區塊 -->
-    <div class="text-center mb-6">
-        <h1 class="text-3xl font-bold tracking-wider mb-2 text-blue-500">智淨城市 AI 分類掃描</h1>
-        <p class="text-sm text-blue-300 opacity-80">請掃描廢物，或使用「上傳相片」功能測試！</p>
-    </div>
-
-    <!-- 影像掃描/預覽區塊 -->
-    <div class="relative w-full max-w-sm aspect-[3/4] bg-gray-900 rounded-2xl border-2 border-blue-600 shadow-[0_0_15px_rgba(59,130,246,0.3)] overflow-hidden mb-8 flex items-center justify-center">
+    <div class="tech-card rounded-xl shadow-2xl p-6 w-full max-w-lg border">
         
-        <!-- 攝影機畫面 -->
-        <video id="camera-feed" class="absolute inset-0 w-full h-full object-cover" autoplay playsinline></video>
-        
-        <!-- 截取的影像或上傳的影像預覽 -->
-        <img id="image-preview" class="absolute inset-0 w-full h-full object-cover hidden" alt="預覽影像">
-        
-        <!-- 隱藏的 Canvas 用於處理影像 -->
-        <canvas id="capture-canvas" class="hidden"></canvas>
+        <!-- 標題區塊 -->
+        <h1 class="text-xl font-bold text-center mb-4 tech-text tracking-widest">自動安檢與轉廢為能系統</h1>
 
-        <!-- 掃描動畫線 (裝飾用) -->
-        <div id="scan-line" class="absolute top-0 left-0 w-full h-1 bg-blue-400 shadow-[0_0_10px_#60a5fa] hidden animate-[scan_2s_ease-in-out_infinite]"></div>
-    </div>
-
-    <!-- 操作按鈕區塊 -->
-    <div class="flex flex-col gap-4 w-full max-w-sm">
-        <button id="btn-scan" class="flex items-center justify-center gap-2 bg-gray-800 hover:bg-gray-700 border border-blue-500 text-blue-400 font-bold py-3 px-6 rounded-xl transition-colors duration-300">
-            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"></path><circle cx="12" cy="13" r="3"></circle></svg>
-            掃描相機畫面
-        </button>
-
-        <button id="btn-upload" class="flex items-center justify-center gap-2 bg-gray-800 hover:bg-gray-700 border border-blue-500 text-blue-400 font-bold py-3 px-6 rounded-xl transition-colors duration-300">
-            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
-            上傳垃圾相片
-        </button>
-        <!-- 隱藏的檔案上傳元件 -->
-        <input type="file" id="file-input" accept="image/*" class="hidden">
-    </div>
-
-    <!-- AI 分析結果顯示區塊 -->
-    <div id="result-container" class="w-full max-w-sm mt-8 p-5 bg-gray-900 border border-blue-800 rounded-xl hidden">
-        <h3 class="text-lg font-bold text-blue-400 mb-2 border-b border-blue-800 pb-2">AI 分類結果</h3>
-        <div id="result-text" class="text-blue-100 text-sm leading-relaxed whitespace-pre-wrap">
-            <!-- 結果會顯示在這裡 -->
+        <!-- 虛線裝飾框 -->
+        <div class="bg-gray-900 border border-gray-700 rounded p-1 mb-4 dotted-line text-xs opacity-50">
+            ......................................................................
         </div>
-    </div>
 
-    <!-- Tailwind 擴展自訂動畫 -->
-    <style>
-        @keyframes scan {
-            0% { top: 0%; opacity: 0; }
-            10% { opacity: 1; }
-            90% { opacity: 1; }
-            100% { top: 100%; opacity: 0; }
-        }
-    </style>
+        <!-- 影像畫面容器 -->
+        <div class="bg-black rounded-lg border border-gray-700 overflow-hidden relative aspect-[4/3] flex items-center justify-center">
+            <video id="cameraStream" autoplay playsinline class="w-full h-full object-cover hidden"></video>
+            <!-- 尚未連線時的替代黑畫面 -->
+            <div id="cameraPlaceholder" class="absolute inset-0 flex items-center justify-center text-gray-600 text-sm">
+                載入相機中...
+            </div>
+        </div>
+
+        <!-- 按鈕區塊 -->
+        <button id="scanBtn" class="mt-4 w-full bg-cyan-700 hover:bg-cyan-600 disabled:bg-gray-700 disabled:text-gray-400 text-white font-bold py-3 rounded text-sm tracking-wider transition duration-200 shadow-[0_0_15px_rgba(0,188,212,0.3)] disabled:shadow-none" disabled>
+            [ 啟動安檢分析 ]
+        </button>
+
+        <!-- 系統狀態列 -->
+        <div id="statusBar" class="mt-4 bg-gray-800 border border-gray-700 text-gray-400 text-sm py-2 px-3 rounded text-center tracking-wide flex items-center justify-center gap-2">
+            <span id="statusIcon">🔄</span> 
+            <span id="statusText">系統校準中...</span>
+        </div>
+
+        <!-- 錯誤與日誌輸出區塊 -->
+        <div id="logArea" class="mt-4 bg-[#0F172A] border border-[#1E293B] rounded p-4 text-sm font-mono min-h-[80px]">
+            <div id="logContent" class="text-gray-400">系統初始化...</div>
+        </div>
+        
+        <!-- 用於截圖的隱藏畫布 -->
+        <canvas id="captureCanvas" class="hidden"></canvas>
+    </div>
 
     <script>
-        document.addEventListener('DOMContentLoaded', () => {
-            const video = document.getElementById('camera-feed');
-            const canvas = document.getElementById('capture-canvas');
-            const imagePreview = document.getElementById('image-preview');
-            const btnScan = document.getElementById('btn-scan');
-            const btnUpload = document.getElementById('btn-upload');
-            const fileInput = document.getElementById('file-input');
-            const resultContainer = document.getElementById('result-container');
-            const resultText = document.getElementById('result-text');
-            const scanLine = document.getElementById('scan-line');
+        const video = document.getElementById('cameraStream');
+        const placeholder = document.getElementById('cameraPlaceholder');
+        const canvas = document.getElementById('captureCanvas');
+        const scanBtn = document.getElementById('scanBtn');
+        const statusIcon = document.getElementById('statusIcon');
+        const statusText = document.getElementById('statusText');
+        const logContent = document.getElementById('logContent');
 
-            let stream = null;
+        let streamActive = false;
 
-            // 啟動相機
-            async function startCamera() {
-                try {
-                    stream = await navigator.mediaDevices.getUserMedia({ 
-                        video: { facingMode: 'environment' } // 優先使用後置鏡頭
-                    });
-                    video.srcObject = stream;
-                    video.classList.remove('hidden');
-                    imagePreview.classList.add('hidden');
-                } catch (err) {
-                    console.error("無法存取相機: ", err);
-                    // 如果無法存取相機，仍然可以使用上傳功能
-                }
-            }
-
-            // 初始化時啟動相機
-            startCamera();
-
-            // 處理「掃描相機畫面」按鈕點擊
-            btnScan.addEventListener('click', () => {
-                if (!stream) {
-                    alert("相機未啟用，請檢查權限或使用上傳功能。");
-                    return;
-                }
-
-                // 設定 Canvas 尺寸與影片相同
-                canvas.width = video.videoWidth;
-                canvas.height = video.videoHeight;
-                const ctx = canvas.getContext('2d');
-                ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-
-                // 轉換為 Base64 (壓縮品質為 0.7 以減少傳輸量)
-                const base64Image = canvas.toDataURL('image/jpeg', 0.7);
+        // 初始化相機
+        async function initCamera() {
+            try {
+                // 請求後置鏡頭
+                const stream = await navigator.mediaDevices.getUserMedia({ 
+                    video: { facingMode: "environment" } 
+                });
                 
-                // 顯示預覽畫面，隱藏實時影片
-                imagePreview.src = base64Image;
-                imagePreview.classList.remove('hidden');
-                video.classList.add('hidden');
-
-                // 發送給 AI 進行分析
-                analyzeImage(base64Image);
-            });
-
-            // 處理「上傳垃圾相片」按鈕點擊
-            btnUpload.addEventListener('click', () => {
-                fileInput.click();
-            });
-
-            // 處理檔案選擇
-            fileInput.addEventListener('change', (e) => {
-                const file = e.target.files[0];
-                if (!file) return;
-
-                const reader = new FileReader();
-                reader.onload = (event) => {
-                    const base64Image = event.target.result;
-                    
-                    // 顯示預覽
-                    imagePreview.src = base64Image;
-                    imagePreview.classList.remove('hidden');
-                    video.classList.add('hidden');
-
-                    // 停止相機以節省資源
-                    if (stream) {
-                        stream.getTracks().forEach(track => track.stop());
-                        stream = null;
-                    }
-
-                    // 發送給 AI 進行分析
-                    analyzeImage(base64Image);
+                video.srcObject = stream;
+                video.classList.remove('hidden');
+                placeholder.classList.add('hidden');
+                
+                // 相機準備就緒
+                video.onloadedmetadata = () => {
+                    streamActive = true;
+                    scanBtn.disabled = false;
+                    statusIcon.textContent = "✅";
+                    statusText.textContent = "相機已連線，系統就緒";
+                    statusText.className = "text-green-400";
+                    logContent.innerHTML = "<span class='text-green-400'>[系統] 權限已核准，準備執行安檢掃描。</span>";
                 };
-                reader.readAsDataURL(file);
-            });
 
-            // 呼叫 PHP 後端 API 進行 AI 分析
-            async function analyzeImage(base64Image) {
-                // UI 狀態更新：顯示載入中
-                btnScan.disabled = true;
-                btnUpload.disabled = true;
-                scanLine.classList.remove('hidden');
-                resultContainer.classList.remove('hidden');
-                resultText.innerHTML = '<span class="animate-pulse text-blue-500">AI 正在努力分析中，請稍候...</span>';
+            } catch (err) {
+                console.error("相機存取失敗:", err);
+                statusIcon.textContent = "⚠️";
+                statusText.textContent = "系統異常";
+                statusText.className = "text-red-400";
+                logContent.innerHTML = "❌ <span class='text-red-400'>無法存取相機，請檢查權限。</span><br><span class='text-gray-500 text-xs mt-2 block'>(提示: 瀏覽器需在 HTTPS 環境下才能開啟相機)</span>";
+            }
+        }
 
-                try {
-                    // 發送 POST 請求給當前頁面的 PHP 邏輯
-                    const response = await fetch('?action=classify', {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json'
-                        },
-                        body: JSON.stringify({ image: base64Image })
-                    });
+        // 啟動分析流程
+        scanBtn.addEventListener('click', async () => {
+            if (!streamActive) return;
 
-                    const data = await response.json();
+            // 鎖定按鈕，防止重複點擊
+            scanBtn.disabled = true;
+            statusIcon.className = "animate-spin inline-block";
+            statusIcon.textContent = "🔄";
+            statusText.textContent = "影像分析中...";
+            statusText.className = "text-cyan-400";
+            logContent.innerHTML = "<span class='text-cyan-400'>[系統] 正在擷取當前影像...</span>";
 
-                    if (data.error) {
-                        throw new Error(data.error);
-                    }
+            // 1. 從影片截取圖片畫到 Canvas
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+            const ctx = canvas.getContext('2d');
+            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
-                    // 解析 OpenAI/Gemini 相容格式的 API 回傳值
-                    let aiResponse = "無法解析結果";
-                    if (data.choices && data.choices[0] && data.choices[0].message) {
-                        aiResponse = data.choices[0].message.content;
-                    }
+            // 2. 將 Canvas 轉為 Base64 (設定品質 0.8 壓縮以防檔案過大)
+            const base64Data = canvas.toDataURL('image/jpeg', 0.8);
+            
+            logContent.innerHTML += "<br><span class='text-cyan-400'>[系統] 上傳資料至 AI 核心模組...</span>";
 
-                    // 顯示結果
-                    resultText.innerHTML = aiResponse;
+            try {
+                // 3. 透過 AJAX 發送給同一個 PHP 檔案處理
+                const response = await fetch(window.location.href, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ image: base64Data })
+                });
 
-                } catch (error) {
-                    console.error('Error:', error);
-                    resultText.innerHTML = `<span class="text-red-400">發生錯誤：${error.message}</span>`;
-                } finally {
-                    // 恢復 UI 狀態
-                    btnScan.disabled = false;
-                    btnUpload.disabled = false;
-                    scanLine.classList.add('hidden');
+                const data = await response.json();
+
+                // 4. 處理回應結果
+                statusIcon.className = ""; // 移除旋轉動畫
+                if (data.success) {
+                    statusIcon.textContent = "✅";
+                    statusText.textContent = "分析完成";
+                    statusText.className = "text-green-400";
+                    
+                    // 根據結果給予不同顏色的提示
+                    let resultColor = "text-gray-300";
+                    if (data.result.includes('可回收') && !data.result.includes('不可')) resultColor = "text-blue-400";
+                    else if (data.result.includes('可焚燒')) resultColor = "text-orange-400";
+                    else if (data.result.includes('不可回收')) resultColor = "text-red-500";
+
+                    logContent.innerHTML = `<span class="text-gray-400">[判定結果]</span><br><span class="text-2xl font-bold ${resultColor}">${data.result}</span>`;
+                } else {
+                    statusIcon.textContent = "❌";
+                    statusText.textContent = "分析失敗";
+                    statusText.className = "text-red-400";
+                    logContent.innerHTML = `<span class='text-red-400'>[錯誤] ${data.message}</span>`;
                 }
+            } catch (err) {
+                statusIcon.className = "";
+                statusIcon.textContent = "❌";
+                statusText.textContent = "網路錯誤";
+                statusText.className = "text-red-400";
+                logContent.innerHTML = `<span class='text-red-400'>[系統] 連線異常，請稍後再試。</span>`;
+            } finally {
+                // 恢復按鈕狀態
+                scanBtn.disabled = false;
             }
         });
+
+        // 網頁載入後立即要求開啟相機
+        window.addEventListener('DOMContentLoaded', initCamera);
     </script>
 </body>
 </html>
-
-```
