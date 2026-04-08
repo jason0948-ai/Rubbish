@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="zh-HK">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>智淨城市 - 基於 AI 與物聯網的太陽能智能分類系統</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        .loading-spinner {
+            border: 4px solid rgba(255, 255, 255, 0.3);
+            border-radius: 50%;
+            border-top: 4px solid #ffffff;
+            width: 24px;
+            height: 24px;
+            -webkit-animation: spin 1s linear infinite;
+            animation: spin 1s linear infinite;
+            display: inline-block;
+            vertical-align: middle;
+            margin-right: 8px;
+        }
+        .loading-spinner-dark {
+            border: 4px solid rgba(0, 0, 0, 0.1);
+            border-top: 4px solid #4B5563; /* 灰黑色 */
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body class="bg-gray-50 min-h-screen font-sans text-gray-800">
+
+    <div class="max-w-3xl mx-auto pt-10 px-4 pb-20">
+        <div class="text-center mb-10">
+            <h1 class="text-3xl md:text-4xl font-bold text-green-700 mb-3 flex items-center justify-center gap-3">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-10 w-10" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2.5 0 0010.5 8h.5a2 2 0 012 2 2 2 0 104 0 2 2 0 012-2h1.064M15 20.488V18a2 2 0 012-2h3.064M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                智淨城市
+            </h1>
+            <p class="text-gray-600 font-medium text-lg">AI 與物聯網太陽能智能分類系統 - 測試終端</p>
+        </div>
+
+        <div class="bg-white rounded-2xl shadow-lg overflow-hidden border border-gray-100">
+            <div class="bg-green-600 p-4">
+                <h2 class="text-white font-semibold text-lg flex items-center gap-2">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                    </svg>
+                    Raspberry Pi 5 視覺識別模擬
+                </h2>
+            </div>
+            
+            <div class="p-6">
+                <div class="relative bg-gray-900 rounded-xl overflow-hidden aspect-video flex items-center justify-center mb-6">
+                    <video id="videoElement" autoplay playsinline class="w-full h-full object-cover hidden"></video>
+                    <div id="cameraPlaceholder" class="text-gray-400 text-center">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-16 w-16 mx-auto mb-2 opacity-50" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
+                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" />
+                        </svg>
+                        <p>正在啟動鏡頭...</p>
+                    </div>
+                </div>
+
+                <canvas id="canvasElement" class="hidden"></canvas>
+
+                <div class="flex flex-col sm:flex-row gap-4 justify-center">
+                    <button id="captureBtn" class="flex-1 bg-blue-500 hover:bg-blue-600 text-white font-bold py-3 px-6 rounded-lg transition-colors shadow-md flex justify-center items-center gap-2">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
+                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" />
+                        </svg>
+                        1. 拍攝照片
+                    </button>
+                    <button id="uploadBtn" class="flex-1 bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-6 rounded-lg transition-colors shadow-md flex justify-center items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed" disabled>
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+                        </svg>
+                        <span>2. 上傳並進行 AI 分類</span>
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <div id="resultContainer" class="mt-8 bg-white rounded-2xl shadow-lg p-6 border border-gray-100 hidden">
+            <h3 class="text-lg font-semibold text-gray-700 mb-4 border-b pb-2">照片預覽與邊緣運算結果</h3>
+            
+            <div class="flex flex-col md:flex-row gap-6 items-center">
+                <div class="w-full md:w-1/2">
+                    <img id="snapshotImage" src="" alt="截圖預覽" class="w-full rounded-lg border-2 border-gray-200">
+                </div>
+                
+                <div class="w-full md:w-1/2 flex flex-col items-center justify-center text-center">
+                    
+                    <div class="mb-4 w-full">
+                        <p class="text-sm text-gray-500 mb-1">識別物品：</p>
+                        <div id="aiItemName" class="text-2xl font-bold text-gray-800 bg-gray-50 py-2 px-4 rounded-lg border border-gray-200 min-h-[3rem] flex items-center justify-center">
+                            等待上傳...
+                        </div>
+                    </div>
+
+                    <div class="w-full">
+                        <p class="text-sm text-gray-500 mb-1">系統判定類別：</p>
+                        <div id="aiResultText" class="text-3xl lg:text-4xl font-black py-4 px-4 rounded-xl shadow-inner w-full bg-gray-100 text-gray-400">
+                            等待上傳...
+                        </div>
+                    </div>
+                    
+                    <p id="debugMsg" class="text-xs text-gray-400 mt-4 break-all"></p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const video = document.getElementById('videoElement');
+        const canvas = document.getElementById('canvasElement');
+        const placeholder = document.getElementById('cameraPlaceholder');
+        const captureBtn = document.getElementById('captureBtn');
+        const uploadBtn = document.getElementById('uploadBtn');
+        const resultContainer = document.getElementById('resultContainer');
+        const snapshotImage = document.getElementById('snapshotImage');
+        const aiItemName = document.getElementById('aiItemName');
+        const aiResultText = document.getElementById('aiResultText');
+        const debugMsg = document.getElementById('debugMsg');
+
+        let stream = null;
+        let capturedBase64Image = null;
+
+        // 頁面載入時自動啟動攝像頭
+        window.addEventListener('load', async () => {
+            try {
+                stream = await navigator.mediaDevices.getUserMedia({ 
+                    video: { facingMode: 'environment' } 
+                });
+                video.srcObject = stream;
+                video.classList.remove('hidden');
+                placeholder.classList.add('hidden');
+            } catch (err) {
+                alert('無法存取攝像頭，請確認瀏覽器權限設置。');
+                console.error('Error accessing camera:', err);
+                placeholder.innerHTML = '<p class="text-red-500">❌ 無法存取鏡頭</p>';
+            }
+        });
+
+        // 按鈕 1: 拍攝照片
+        captureBtn.addEventListener('click', () => {
+            if (!stream) {
+                alert('鏡頭尚未啟動');
+                return;
+            }
+
+            // 1. 在 Canvas 上繪製當前影像
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+            const ctx = canvas.getContext('2d');
+            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+            // 2. 獲取 Base64 格式的圖片
+            capturedBase64Image = canvas.toDataURL('image/jpeg', 0.8);
+            
+            // 3. 更新 UI
+            snapshotImage.src = capturedBase64Image;
+            resultContainer.classList.remove('hidden');
+            
+            aiItemName.textContent = "等待上傳...";
+            aiResultText.textContent = "等待上傳...";
+            aiResultText.className = "text-3xl lg:text-4xl font-black py-4 px-4 rounded-xl shadow-inner w-full bg-gray-100 text-gray-400";
+            debugMsg.textContent = "照片已拍攝，請點擊「上傳」按鈕。";
+            
+            uploadBtn.disabled = false; 
+        });
+
+        // 按鈕 2: 上傳並發送請求
+        uploadBtn.addEventListener('click', async () => {
+            if (!capturedBase64Image) {
+                alert('請先拍攝照片');
+                return;
+            }
+            
+            // 1. 更新 UI 狀態 (分析中)
+            aiItemName.innerHTML = '<div class="loading-spinner loading-spinner-dark"></div> 分析中...';
+            aiResultText.innerHTML = '<div class="loading-spinner loading-spinner-dark"></div> 分析中...';
+            aiResultText.className = "text-2xl font-bold py-4 px-4 rounded-xl shadow-inner w-full bg-gray-100 text-gray-600 flex items-center justify-center";
+            debugMsg.textContent = "正在發送數據至 PHP 伺服器並調用 API...";
+            
+            uploadBtn.disabled = true; 
+            captureBtn.disabled = true; 
+
+            // 2. 發送 POST 請求至自身的 PHP 區塊
+            try {
+                const formData = new FormData();
+                formData.append('action', 'classify');
+                formData.append('image', capturedBase64Image);
+
+                const response = await fetch(window.location.href, {
+                    method: 'POST',
+                    body: formData
+                });
+
+                const textResult = await response.text();
+                
+                let result;
+                try {
+                    result = JSON.parse(textResult);
+                } catch (parseError) {
+                    console.error("解析 JSON 失敗，伺服器原始回傳:", textResult);
+                    throw new Error("伺服器回傳格式錯誤，請檢查 PHP 後端。");
+                }
+
+                console.log("API Response:", result);
+
+                if (result.error) {
+                    throw new Error(result.message);
+                }
+
+                // 3. 處理並顯示識別結果
+                const itemName = result.itemName || result.item || "無法識別具體物品";
+                const category = result.result || result.category || "未知分類";
+                
+                aiItemName.textContent = itemName;
+                displayResult(category);
+                
+                debugMsg.textContent = "✅ 分析完成 (Token usage: " + (result.raw?.usage?.total_tokens || "N/A") + ")";
+
+            } catch (error) {
+                console.error('API Error:', error);
+                aiItemName.textContent = "發生錯誤";
+                aiResultText.textContent = "分析失敗";
+                aiResultText.className = "text-2xl font-black py-4 px-4 rounded-xl shadow-inner w-full bg-red-100 text-red-600";
+                debugMsg.textContent = "錯誤: " + error.message;
+                uploadBtn.disabled = false; 
+            } finally {
+                captureBtn.disabled = false; 
+            }
+        });
+
+        // 根據分類結果改變顏色樣式
+        function displayResult(category) {
+            let displayCategory = category;
+            let bgClass = "bg-gray-100";
+            let textClass = "text-gray-800";
+
+            // 判斷是否為電子產品或不作分類
+            if (category.includes('電子產品') || category.includes('不作分類')) {
+                bgClass = "bg-purple-100";
+                textClass = "text-purple-600";
+                // 強制將顯示文字改為較明確的提示
+                displayCategory = "不作分類 (電子產品)"; 
+            } else if (category.includes('可焚燒')) {
+                bgClass = "bg-orange-100";
+                textClass = "text-orange-600";
+            } else if (category.includes('不可回收')) {
+                bgClass = "bg-red-100";
+                textClass = "text-red-600";
+            } else if (category.includes('可回收')) {
+                bgClass = "bg-green-100";
+                textClass = "text-green-600";
+            }
+
+            aiResultText.textContent = displayCategory;
+            aiResultText.className = `text-3xl lg:text-4xl font-black py-4 px-4 rounded-xl shadow-inner w-full ${bgClass} ${textClass}`;
+        }
+    </script>
+</body>
+</html>
